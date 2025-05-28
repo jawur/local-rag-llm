@@ -10,8 +10,14 @@ A Retrieval-Augmented Generation (RAG) application using LLM models and vector s
 
 - **Embeddings**: Uses `LlamaCppEmbeddings` - requires **GGUF format models** (quantized llama.cpp models)
 - **LLM**: Uses `LlamaCpp` - requires **GGUF format models**
-- **Vector Store**: FAISS (model-agnostic)
+- **Vector Store**: FAISS (model-agnostic). Using faiss-cpu package
 - **RAG Pipeline**: LangChain's RetrievalQA (works with any LangChain-compatible LLM)
+
+## Tested Models
+
+The application has been tested with the following models:
+- Embeddings: `bge-small-en-v1.5-q4_k_m.gguf`
+- LLM: `llama-2-7b.Q4_K_M.gguf`
 
 ## Apple Silicon Support
 
