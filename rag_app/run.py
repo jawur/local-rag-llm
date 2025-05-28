@@ -1,164 +1,65 @@
 import os
-import time
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import LlamaCppEmbeddings
-from langchain_community.llms import LlamaCpp
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
-from rag_app.create import VectorStoreCreator
+from flask import Flask, request, jsonify, send_file
+from flask_swagger_ui import get_swaggerui_blueprint
+from rag_app.application import RagApplication
 
 load_dotenv()
-
-def import_time():
-    return time.strftime("%Y-%m-%d %H:%M:%S")
 
 if os.getenv("LANGCHAIN_API_KEY") and os.getenv("LANGCHAIN_TRACING_V2") == "true":
     from langsmith import Client
     client = Client()
 
-class RagApplication:
-    def __init__(self, source_type=None, vector_store_dir="vector_store_db"):
-        """Initialize the RAG application.
+def create_app(rag_app=None):
+    """Create and configure the Flask application.
+    
+    Args:
+        rag_app (RagApplication): An initialized RagApplication instance
         
-        Args:
-            source_type (str): Type of source files to process
-            vector_store_dir (str): Directory where the vector store is saved
-        """
-        self.source_type = source_type or os.getenv("SOURCE_TYPE", "pdf")
-        self.vector_store_dir = vector_store_dir
-        self.app = Flask(__name__)
-        self.qa_chain = None
+    Returns:
+        Flask: The configured Flask application
+    """
+    if rag_app is None:
+        rag_app = RagApplication()
+        rag_app.initialize()
         
-    def initialize(self, force_create=False):
-        """Initialize the application by creating vector store and setting up QA chain."""
-        creator = VectorStoreCreator(source_type=self.source_type, vector_store_dir=self.vector_store_dir)
-        creator.create(force=force_create)
-        self.qa_chain = self._setup_qa_chain()
-        self._setup_routes()
-        
-    def _load_embeddings(self):
-        """Load the embeddings model."""
-        return LlamaCppEmbeddings(
-            model_path=os.getenv("EMBEDDINGS_MODEL_PATH"),
-            verbose=False
-        )
-
-    def _load_vector_store(self):
-        """Load the vector store."""
-        embeddings = self._load_embeddings()
-        return FAISS.load_local(
-            self.vector_store_dir, 
-            embeddings,
-            allow_dangerous_deserialization=True
-        )
-
-    def _load_llm(self):
-        """Load the language model."""
-        return LlamaCpp(
-            model_path=os.getenv("LLM_MODEL_PATH"),
-            temperature=float(os.getenv("TEMPERATURE", 0.0)),
-            max_tokens=int(os.getenv("MAX_TOKENS", 2000)),
-            top_p=float(os.getenv("TOP_P", 0.9)),
-            top_k=int(os.getenv("TOP_K", 40)),
-            repeat_penalty=float(os.getenv("REPEAT_PENALTY", 1.3)),
-            n_gpu_layers=int(os.getenv("GPU_LAYERS", -1)),
-            n_batch=int(os.getenv("GPU_BATCH_SIZE", 256)),
-            n_threads=int(os.getenv("CPU_THREADS", 6)),
-            f16_kv=True,
-            use_mlock=True,
-            verbose=False,
-            n_ctx=int(os.getenv("N_CTX", 4096)),
-            seed=42,
-            use_mmap=True,
-            stop=["Human:", "Context information is below:"],
-            grammar_path=os.getenv("GRAMMAR_PATH", None)
-        )
-
-    def _create_qa_prompt(self):
-        """Create the QA prompt template."""
-        template = """You are a helpful assistant that provides accurate information based on the context provided.
-If you do not know the answer or the information is not present in the context, do not attempt to make up an answer. 
-Instead, respond with "I don't know."
-
-Context information is below:
------------------------
-{context}
------------------------
-
-Given the context information and no prior knowledge, answer the following question:
-{question}
-
-Answer:"""
-        return PromptTemplate(template=template, input_variables=["context", "question"])
-
-    def _setup_qa_chain(self):
-        """Set up the QA chain."""
-        vector_store = self._load_vector_store()
-        llm = self._load_llm()
-        qa_prompt = self._create_qa_prompt()
-
-        tags = None
-        if os.getenv("LANGCHAIN_API_KEY") and os.getenv("LANGCHAIN_TRACING_V2") == "true":
-            tags = ["rag-llm", "production"]
-        
-        return RetrievalQA.from_chain_type(
-            llm=llm,
-            chain_type="stuff",
-            retriever=vector_store.as_retriever(),
-            chain_type_kwargs={"prompt": qa_prompt},
-            tags=tags
-        )
-
-    def _handle_query(self):
-        """Handle the query endpoint."""
+    app = Flask(__name__)
+    
+    @app.route('/api/query', methods=['POST'])
+    def handle_query():
         try:
             data = request.get_json()
             if not data or 'question' not in data:
                 return jsonify({"error": "Missing 'question' field in request body"}), 400
 
             question = data['question']
-            
-            metadata = None
-            if os.getenv("LANGCHAIN_API_KEY") and os.getenv("LANGCHAIN_TRACING_V2") == "true":
-                metadata = {
-                    "endpoint": "/query",
-                    "question_length": len(question),
-                    "timestamp": str(import_time()) if 'import_time' in globals() else None
-                }
-            
-            result = self.qa_chain.invoke(
-                {"query": question},
-                config={"metadata": metadata} if metadata else {}
-            )
+            result = rag_app.query(question)
             
             return jsonify({
-                "data": {
-                    "question": question,
-                    "answer": result['result'].strip()
-                }
+                "data": result
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+    
+    @app.route('/api/openapi.yaml')
+    def serve_openapi_spec():
+        return send_file('../openapi.yaml', mimetype='text/yaml')
 
-    def _setup_routes(self):
-        """Set up the Flask routes."""
-        self.app.route('/query', methods=['POST'])(self._handle_query)
-
-    def run(self, host='0.0.0.0', port=None, debug=False):
-        """Run the Flask application.
-        
-        Args:
-            host (str): Host to run the application on
-            port (int): Port to run the application on
-            debug (bool): Whether to run in debug mode
-        """
-        port = port or int(os.getenv("FLASK_PORT", 8080))
-        self.app.run(host=host, port=port, debug=debug)
-
+    swagger_ui_blueprint = get_swaggerui_blueprint(
+        '/api/docs',
+        '/api/openapi.yaml',
+        config={
+            'app_name': "RAG Application API"
+        }
+    )
+    app.register_blueprint(swagger_ui_blueprint, url_prefix='/api/docs')
+    
+    return app
 
 if __name__ == '__main__':
     rag_app = RagApplication()
     rag_app.initialize()
-    rag_app.run()
+    
+    app = create_app(rag_app)
+    port = int(os.getenv("FLASK_PORT", 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)

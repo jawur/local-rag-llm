@@ -93,7 +93,6 @@ pip install -r requirements.txt
 
 3. Run the application:
 ```bash
-# Initialize and run the application
 python -m rag_app.run
 ```
 
@@ -104,10 +103,16 @@ python -m rag_app.run --force-create
 
 ## API
 
-The application provides a simple API to query the vector store:
+The application provides a simple API to query the vector store. You can access the interactive Swagger documentation at:
 
 ```
-POST /query
+http://localhost:8080/api/docs
+```
+
+The API endpoints are:
+
+```
+POST /api/query
 ```
 
 Request body:
@@ -119,7 +124,7 @@ Request body:
 
 Example:
 ```bash
-curl -X POST "http://localhost:8080/query" \
+curl -X POST "http://localhost:8080/api/query" \
   -H "Content-Type: application/json" \
   -d '{"question": "What is the main topic of the document?"}'
 ```

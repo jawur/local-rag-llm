@@ -1,16 +1,13 @@
 import os
 import unittest
-from unittest.mock import patch, MagicMock, call
-from flask import Flask
-from rag_app.run import RagApplication
+from unittest.mock import patch, MagicMock
+from rag_app.application import RagApplication
 
 
 class TestRagApplication(unittest.TestCase):
     def setUp(self):
         self.test_vector_store_dir = "test_vector_store"
         self.app_instance = RagApplication()
-        self.flask_app = self.app_instance.app
-        self.test_client = self.flask_app.test_client()
         
     def tearDown(self):
         pass
@@ -20,20 +17,17 @@ class TestRagApplication(unittest.TestCase):
             app = RagApplication()
             self.assertEqual(app.source_type, "csv")
             self.assertEqual(app.vector_store_dir, "vector_store_db")
-            self.assertIsNotNone(app.app)
             self.assertIsNone(app.qa_chain)
     
     def test_init_with_params(self):
         app = RagApplication(source_type="pdf", vector_store_dir=self.test_vector_store_dir)
         self.assertEqual(app.source_type, "pdf")
         self.assertEqual(app.vector_store_dir, self.test_vector_store_dir)
-        self.assertIsNotNone(app.app)
         self.assertIsNone(app.qa_chain)
     
-    @patch('rag_app.run.VectorStoreCreator')
+    @patch('rag_app.application.VectorStoreCreator')
     @patch.object(RagApplication, '_setup_qa_chain')
-    @patch.object(RagApplication, '_setup_routes')
-    def test_initialize(self, mock_setup_routes, mock_setup_qa_chain, mock_creator_class):
+    def test_initialize(self, mock_setup_qa_chain, mock_creator_class):
         mock_creator = MagicMock()
         mock_creator_class.return_value = mock_creator
         mock_qa_chain = MagicMock()
@@ -48,10 +42,9 @@ class TestRagApplication(unittest.TestCase):
         )
         mock_creator.create.assert_called_once_with(force=True)
         mock_setup_qa_chain.assert_called_once()
-        mock_setup_routes.assert_called_once()
         self.assertEqual(app.qa_chain, mock_qa_chain)
     
-    @patch('rag_app.run.LlamaCppEmbeddings')
+    @patch('rag_app.application.LlamaCppEmbeddings')
     def test_load_embeddings(self, mock_embeddings_class):
         mock_embeddings = MagicMock()
         mock_embeddings_class.return_value = mock_embeddings
@@ -67,7 +60,7 @@ class TestRagApplication(unittest.TestCase):
             )
     
     @patch.object(RagApplication, '_load_embeddings')
-    @patch('rag_app.run.FAISS')
+    @patch('rag_app.application.FAISS')
     def test_load_vector_store(self, mock_faiss, mock_load_embeddings):
         mock_embeddings = MagicMock()
         mock_load_embeddings.return_value = mock_embeddings
@@ -85,7 +78,7 @@ class TestRagApplication(unittest.TestCase):
             allow_dangerous_deserialization=True
         )
     
-    @patch('rag_app.run.LlamaCpp')
+    @patch('rag_app.application.LlamaCpp')
     def test_load_llm(self, mock_llm_class):
         mock_llm = MagicMock()
         mock_llm_class.return_value = mock_llm
@@ -139,7 +132,7 @@ class TestRagApplication(unittest.TestCase):
     @patch.object(RagApplication, '_load_vector_store')
     @patch.object(RagApplication, '_load_llm')
     @patch.object(RagApplication, '_create_qa_prompt')
-    @patch('rag_app.run.RetrievalQA')
+    @patch('rag_app.application.RetrievalQA')
     def test_setup_qa_chain(self, mock_retrieval_qa, mock_create_prompt, mock_load_llm, mock_load_vs):
         mock_vs = MagicMock()
         mock_retriever = MagicMock()
@@ -171,72 +164,23 @@ class TestRagApplication(unittest.TestCase):
             tags=None
         )
     
-    def test_handle_query_success(self):
+    def test_query(self):
         mock_qa_chain = MagicMock()
         mock_qa_chain.invoke.return_value = {"result": " RAG is a retrieval-augmented generation model. "}
 
         self.app_instance.qa_chain = mock_qa_chain
 
-        self.app_instance._setup_routes()
+        result = self.app_instance.query("What is RAG?")
 
-        with self.flask_app.test_request_context('/query', method='POST', 
-                                               json={"question": "What is RAG?"}):
-            response = self.app_instance._handle_query()
-
-            self.assertIn('data', response.json)
-            self.assertEqual(response.json['data']['question'], "What is RAG?")
-            self.assertEqual(response.json['data']['answer'], "RAG is a retrieval-augmented generation model.")
-            mock_qa_chain.invoke.assert_called_once_with({"query": "What is RAG?"}, config={})
+        self.assertEqual(result["question"], "What is RAG?")
+        self.assertEqual(result["answer"], "RAG is a retrieval-augmented generation model.")
+        mock_qa_chain.invoke.assert_called_once_with({"query": "What is RAG?"}, config={})
     
-    def test_handle_query_missing_question(self):
-        self.app_instance._setup_routes()
+    def test_query_empty_question(self):
+        self.app_instance.qa_chain = MagicMock()
         
-        with self.flask_app.test_request_context('/query', method='POST', json={}):
-            response = self.app_instance._handle_query()
-            
-            self.assertEqual(response[1], 400)  # Check status code
-            self.assertEqual(response[0].json, {"error": "Missing 'question' field in request body"})
-    
-    def test_handle_query_exception(self):
-        mock_qa_chain = MagicMock()
-        mock_qa_chain.invoke.side_effect = Exception("Test error")
-        
-        self.app_instance.qa_chain = mock_qa_chain
-        
-        self.app_instance._setup_routes()
-        
-        with self.flask_app.test_request_context('/query', method='POST', 
-                                               json={"question": "What is RAG?"}):
-            response = self.app_instance._handle_query()
-            
-            self.assertEqual(response[1], 500)  # Check status code
-            self.assertEqual(response[0].json, {"error": "Test error"})
-            mock_qa_chain.invoke.assert_called_once_with({"query": "What is RAG?"}, config={})
-    
-    def test_setup_routes(self):
-        app = RagApplication()
-        mock_flask_app = MagicMock()
-        app.app = mock_flask_app
-        
-        app._setup_routes()
-        
-        mock_flask_app.route.assert_called_once_with('/query', methods=['POST'])
-    
-    def test_run(self):
-        with patch.dict(os.environ, {"FLASK_PORT": "5000"}):
-            with patch.object(Flask, 'run') as mock_run:
-                app = RagApplication()
-                app.run(host='127.0.0.1', debug=True)
-                
-                mock_run.assert_called_once_with(host='127.0.0.1', port=5000, debug=True)
-    
-    def test_run_with_default_port(self):
-        with patch.dict(os.environ, {}):
-            with patch.object(Flask, 'run') as mock_run:
-                app = RagApplication()
-                app.run()
-                
-                mock_run.assert_called_once_with(host='0.0.0.0', port=8080, debug=False)
+        with self.assertRaises(ValueError):
+            self.app_instance.query("")
 
 
 if __name__ == '__main__':
