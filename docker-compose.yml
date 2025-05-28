@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - GGML_BLAS_VENDOR=OpenBLAS
+    volumes:
+      - .:/app
+    command: ["python", "-m", "rag_app.run"]

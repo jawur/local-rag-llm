@@ -1,0 +1,10 @@
+.DS_Store
+.vscode
+vector_store_db/*
+models/*
+sources/*
+.env
+venv
+__pycache__
+test/__pycache__
+rag_app/__pycache__
